@@ -7,9 +7,13 @@ set -euo pipefail
 PROFILES_DIR="$HOME/.bash_history_profiles"
 mkdir -p "$PROFILES_DIR" # Ensure the base directory for profiles exists
 
+# Default number of history lines to show
+DEFAULT_HISTORY_LINES=50
+show_n_history_lines="$DEFAULT_HISTORY_LINES"
+
 # --- Function to display help ---
 show_help() {
-    echo "Usage: $(basename "$0") [ACTION]"
+    echo "Usage: $(basename "$0") [ACTION] [OPTIONS]"
     echo "Manages profiles for storing selected bash history commands."
     echo
     echo "Initial Choice (if no action is provided as an argument):"
@@ -18,9 +22,15 @@ show_help() {
     echo "  - (E)dit Profile: Select an existing profile to remove commands from it."
     echo "  - (R)emove Profile: Select an existing profile to delete it."
     echo
+    echo "OPTIONS:"
+    echo "  -h, --help             Show this help message."
+    echo "  -n LINES, --num-lines LINES"
+    echo "                         Specify the number of recent history lines to display when adding commands."
+    echo "                         (Default: $DEFAULT_HISTORY_LINES)"
+    echo
     echo "Workflow for Adding/Creating (A):"
     echo "1. You will be prompted to select an existing profile or enter a name for a new one."
-    echo "2. The script will then display the last 50 lines of your command history."
+    echo "2. The script will then display the last specified number (default $DEFAULT_HISTORY_LINES) of your command history."
     echo "3. Enter selection criteria to specify which history lines to save."
     echo
     echo "Workflow for Editing (E):"
@@ -39,31 +49,76 @@ show_help() {
     echo "The script attempts to avoid adding duplicate commands or the command that invoked the script itself."
 }
 
-# --- Argument Parsing for Help or Direct Action ---
-if [[ $# -gt 0 ]]; then
+# --- Argument Parsing ---
+main_action=""
+# Process options first
+while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
             show_help
             exit 0
             ;;
-        A|a|add)
-            main_action="A"
+        -n|--num-lines)
+            if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+                show_n_history_lines="$2"
+                shift # past argument
+                shift # past value
+            else
+                echo "Error: --num-lines requires a numeric argument." >&2
+                exit 1
+            fi
             ;;
-        V|v|view)
-            main_action="V"
-            ;;
-        E|e|edit)
-            main_action="E"
-            ;;
-        R|r|remove)
-            main_action="R"
+        -*)
+            # Check if it's a known action that might look like an option if shortened (e.g., -A)
+            # This simple check assumes actions are single uppercase/lowercase letters
+            if [[ "$1" =~ ^-[aAvVeErR]$ ]]; then
+                 # Let it fall through to action processing later
+                 break
+            fi
+            echo "Error: Unknown option '$1'" >&2
+            show_help
+            exit 1
             ;;
         *)
-            echo "Error: Invalid action '$1'. Use -h or --help for options."
-            exit 1
+            # Not an option, assume it could be an action
+            break
+            ;;
+    esac
+done
+
+# Process action if provided as the current argument
+if [[ $# -gt 0 && -z "$main_action" ]]; then
+    # Convert to uppercase for consistent matching
+    ACTION_ARG=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+    case "$ACTION_ARG" in
+        A|ADD)
+            main_action="A"
+            shift
+            ;;
+        V|VIEW)
+            main_action="V"
+            shift
+            ;;
+        E|EDIT)
+            main_action="E"
+            shift
+            ;;
+        R|REMOVE)
+            main_action="R"
+            shift
+            ;;
+        *)
+            # If it's not a recognized action, it could be an error
+            # or the user didn't provide an action and we should prompt.
+            # If an unknown arg remains, it's an error.
+            if [[ -n "$1" ]]; then
+                echo "Error: Invalid action or unexpected argument '$1'. Use -h or --help for options." >&2
+                exit 1
+            fi
             ;;
     esac
 fi
+
 
 # --- Function to list profiles and get selection ---
 # Returns the selected profile name in the global variable `selected_profile_name`
@@ -185,11 +240,14 @@ elif [[ "$main_action" == "A" ]]; then
     PROFILE_CMDS_FILE="$PROFILES_DIR/$selected_profile_name/commands.sh"
     touch "$PROFILE_CMDS_FILE"
 
-    echo -e "\n--- Last 50 History Lines ---"
+    echo -e "\n--- Last $show_n_history_lines History Lines (or fewer if total history is less) ---" # MODIFIED
     _SCRIPT_HISTFILE="${HISTFILE:-$HOME/.bash_history}"
     set -o history # Enable history tracking in the script
     history -c # Clear script's internal history
     if [ -f "$_SCRIPT_HISTFILE" ]; then
+        # Consider `history -a` here if essential to force write from parent before read,
+        # but be mindful of potential HISTFILE contention or duplicate entries if parent also writes.
+        # Forcing a `history -a` in the calling shell *before* running the script is safer.
         history -r "$_SCRIPT_HISTFILE" # Read history from file
     else
         echo "Warning: History file '$_SCRIPT_HISTFILE' not found."
@@ -205,19 +263,24 @@ elif [[ "$main_action" == "A" ]]; then
     fi
 
     total_history_lines=${#full_history_lines[@]}
-    echo "Total history lines available: $total_history_lines (from $_SCRIPT_HISTFILE)"
+    echo "Total history lines available to script: $total_history_lines (from in-memory history, loaded from $_SCRIPT_HISTFILE)"
 
-    display_start_index=$((total_history_lines > 50 ? total_history_lines - 50 : 0))
+    # MODIFIED: Use show_n_history_lines
+    display_start_index=$((total_history_lines > show_n_history_lines ? total_history_lines - show_n_history_lines : 0))
     if [ "$total_history_lines" -gt 0 ]; then
         for ((idx = display_start_index; idx < total_history_lines; idx++)); do
-            printf "%s\n" "${full_history_lines[$idx]}"
+            # Ensure the line is not empty or just whitespace before printing
+            if [[ -n "${full_history_lines[$idx]// }" ]]; then
+                 printf "%s\n" "${full_history_lines[$idx]}"
+            fi
         done
     else
         echo "No history lines to display."
     fi
     echo "--------------------------"
 
-    echo -e "\nEnter lines/ranges to grab (e.g., 123, 450-455, keyword, keyword+2). Separate with commas."
+    echo -e "\nEnter history line numbers, ranges, keywords (e.g., 123, 450-455, git commit, sudo+1)."
+    echo "Line numbers correspond to those shown above. Separate criteria with commas."
     read -r -p "Selection: " user_selection_str
     if [ -z "$user_selection_str" ]; then
         echo "No selection made. Exiting."
@@ -231,6 +294,9 @@ elif [[ "$main_action" == "A" ]]; then
         if [[ "$hist_line_full_str" =~ ^[[:space:]]*([0-9]+)[[:space:]]+(.*)$ ]]; then
             num="${BASH_REMATCH[1]}"
             cmd="${BASH_REMATCH[2]}"
+            # Only map commands that were actually displayed or could be selected
+            # This means commands from display_start_index onwards
+            # However, the user input refers to the *history number*, not the displayed sequence number
             history_map_num_to_cmd["$num"]="$cmd"
         fi
     done
@@ -239,13 +305,13 @@ elif [[ "$main_action" == "A" ]]; then
     for selection_item in "${selection_criteria[@]}"; do
         selection_item_trimmed=$(echo "$selection_item" | xargs) # Trim whitespace
 
-        if [[ "$selection_item_trimmed" =~ ^[0-9]+$ ]]; then # Single number
+        if [[ "$selection_item_trimmed" =~ ^[0-9]+$ ]]; then # Single number (history number)
             if [[ -v history_map_num_to_cmd["$selection_item_trimmed"] ]]; then
                  history_line_numbers_to_add_map["$selection_item_trimmed"]=1
             else
-                echo "Warning: History line '$selection_item_trimmed' not found. Skipping."
+                echo "Warning: History line number '$selection_item_trimmed' not found in the displayed/processed history. Skipping."
             fi
-        elif [[ "$selection_item_trimmed" =~ ^([0-9]+)-([0-9]+)$ ]]; then # Range
+        elif [[ "$selection_item_trimmed" =~ ^([0-9]+)-([0-9]+)$ ]]; then # Range (history numbers)
             range_start="${BASH_REMATCH[1]}"
             range_end="${BASH_REMATCH[2]}"
             if [ "$range_start" -le "$range_end" ]; then
@@ -263,6 +329,7 @@ elif [[ "$main_action" == "A" ]]; then
         elif [[ "$selection_item_trimmed" =~ ^([^[:space:]+]+)\+([0-9]+)$ ]]; then # keyword+N
             keyword="${BASH_REMATCH[1]}"
             extender="${BASH_REMATCH[2]}"
+            # Search within the full_history_lines (which contains history numbers)
             for hist_num_key in "${!history_map_num_to_cmd[@]}"; do
                 current_cmd="${history_map_num_to_cmd[$hist_num_key]}"
                 if [[ "$current_cmd" == *"$keyword"* ]]; then
@@ -276,6 +343,7 @@ elif [[ "$main_action" == "A" ]]; then
             done
         elif [[ -n "$selection_item_trimmed" ]]; then # Non-empty, assume keyword
             keyword="$selection_item_trimmed"
+            # Search within the full_history_lines
              for hist_num_key in "${!history_map_num_to_cmd[@]}"; do
                 current_cmd="${history_map_num_to_cmd[$hist_num_key]}"
                 if [[ "$current_cmd" == *"$keyword"* ]]; then
@@ -292,15 +360,25 @@ elif [[ "$main_action" == "A" ]]; then
     commands_to_save_to_profile=()
     sorted_line_numbers=($(printf "%s\n" "${!history_line_numbers_to_add_map[@]}" | sort -n))
     current_script_name=$(basename "$0")
+    # Robust way to get script's own invocation patterns
     current_script_invocation_regex_patterns=(
-        "bash ${current_script_name}" "./${current_script_name}"
-        "source ${current_script_name}" ". ${current_script_name}"
-        "${current_script_name}" "$PWD/${current_script_name}"
+        "bash[[:space:]]+.*${current_script_name}" # bash script.sh, bash /path/to/script.sh
+        "\./${current_script_name}"               # ./script.sh
+        "source[[:space:]]+.*${current_script_name}" # source script.sh
+        "\.[[:space:]]+.*${current_script_name}"      # . script.sh
     )
     # Get absolute path of the script
-    absolute_script_path=$(realpath "$0" 2>/dev/null || echo "$0")
-    if [[ "$absolute_script_path" != "$0" && "$absolute_script_path" != "$PWD/${current_script_name}" ]]; then
-        current_script_invocation_regex_patterns+=("$absolute_script_path")
+    absolute_script_path=""
+    if command -v realpath &> /dev/null; then
+        absolute_script_path=$(realpath "$0" 2>/dev/null || echo "$0")
+    else # Fallback for systems without realpath (less robust for symlinks)
+        if [[ "$0" == /* ]]; then absolute_script_path="$0"; else absolute_script_path="$PWD/$0"; fi
+    fi
+
+    # Add patterns for invoking with full path or just name if in PATH
+    current_script_invocation_regex_patterns+=("${current_script_name}")
+    if [[ -n "$absolute_script_path" && "$absolute_script_path" != "$0" && "$absolute_script_path" != "$PWD/${current_script_name}" ]]; then
+        current_script_invocation_regex_patterns+=("$(realpath "$0" 2>/dev/null || echo "$0")") # Covers invoking by full path
     fi
 
 
@@ -315,17 +393,23 @@ elif [[ "$main_action" == "A" ]]; then
             fi
             # Skip commands that invoked this script
             for pattern in "${current_script_invocation_regex_patterns[@]}"; do
-                if [[ "$cmd_to_add" == "$pattern"* ]]; then
-                    is_self_invocation=1; break
+                # Add word boundaries for the script name itself to avoid partial matches in other commands
+                # e.g., if script is 'hist' and command is 'history', don't match.
+                # This is tricky because pattern can be a path.
+                # A simple check:
+                if [[ "$cmd_to_add" == *"$current_script_name"* ]]; then
+                    # More specific check if it's actually an invocation
+                    # This is a heuristic. A perfect check is very complex.
+                    if echo "$cmd_to_add" | grep -E "^\s*(\.?/|bash\s+|source\s+|sh\s+)*.*${current_script_name}(\s|$)"; then
+                         is_self_invocation=1; break
+                    fi
+                    # Check absolute path invocation
+                     if [[ "$cmd_to_add" == *"$absolute_script_path"* ]]; then
+                        is_self_invocation=1; break
+                     fi
                 fi
             done
-            # Broader check for script name within the command
-             if [[ $is_self_invocation -eq 0 && "$cmd_to_add" == *"$current_script_name"* ]]; then
-                 # Check if it's a path to the script or just the script name
-                 if [[ "$cmd_to_add" == */"$current_script_name"* || "$cmd_to_add" == "$current_script_name" || "$cmd_to_add" == "$absolute_script_path"* ]]; then
-                     is_self_invocation=1
-                 fi
-             fi
+
 
             if [ $is_self_invocation -eq 1 ]; then
                 # echo "Skipping self-referential command: $line_num: $cmd_to_add"
@@ -359,7 +443,11 @@ elif [[ "$main_action" == "A" ]]; then
 
         if [ ${#final_commands_to_append_to_file[@]} -gt 0 ]; then
             printf "%s\n" "${final_commands_to_append_to_file[@]}" >> "$PROFILE_CMDS_FILE"
-            echo "" >> "$PROFILE_CMDS_FILE" # Add a blank line for separation if desired
+            # Add a blank line for separation if desired, only if adding new commands
+            if [[ $(tail -c1 "$PROFILE_CMDS_FILE" | wc -l) -eq 0 ]]; then # if no trailing newline
+                 echo "" >> "$PROFILE_CMDS_FILE" # Add one
+            fi
+            echo "" >> "$PROFILE_CMDS_FILE" # Add an extra blank line for visual separation of future appends
             echo "${#final_commands_to_append_to_file[@]} new command(s) added to $PROFILE_CMDS_FILE"
         else
             echo "No new (non-duplicate) commands to add to the profile."
@@ -391,7 +479,7 @@ elif [[ "$main_action" == "E" ]]; then
     # Filter out empty lines that might have been added for spacing
     temp_cmds_array=()
     for cmd_line in "${profile_cmds_array[@]}"; do
-        if [[ -n "$cmd_line" ]]; then # Only add non-empty lines
+        if [[ -n "$(echo "$cmd_line" | xargs)" ]]; then # Only add non-empty lines (after trimming)
             temp_cmds_array+=("$cmd_line")
         fi
     done
@@ -430,7 +518,7 @@ elif [[ "$main_action" == "E" ]]; then
             if (( criterion_trimmed >= 1 && criterion_trimmed <= ${#profile_cmds_array[@]} )); then
                 lines_to_remove_map["$criterion_trimmed"]=1
             else
-                echo "Warning: Line number '$criterion_trimmed' is out of range. Skipping."
+                echo "Warning: Line number '$criterion_trimmed' is out of range (1-${#profile_cmds_array[@]}). Skipping."
             fi
         elif [[ "$criterion_trimmed" =~ ^([0-9]+)-([0-9]+)$ ]]; then # Range
             range_start="${BASH_REMATCH[1]}"
@@ -485,12 +573,17 @@ elif [[ "$main_action" == "E" ]]; then
     fi
 
     # Overwrite the profile file with the remaining commands
+    # Ensure there's a newline after each command, but not multiple blank lines unless intended.
+    # And a final newline if the file is not empty.
     > "$PROFILE_CMDS_FILE" # Truncate the file
     if [ ${#temp_commands_kept[@]} -gt 0 ]; then
         printf "%s\n" "${temp_commands_kept[@]}" >> "$PROFILE_CMDS_FILE"
-        # Add a trailing newline if there's content, for consistency
-        echo "" >> "$PROFILE_CMDS_FILE"
+        # Ensure a single trailing newline if content exists
+        # The printf above adds one, so this might not be strictly necessary
+        # unless the original commands didn't have newlines (which they should from mapfile).
+        # To be safe, ensure the file doesn't end mid-line if all kept commands were one line.
     fi
+
 
     echo "$removed_count command(s) removed. Profile '$selected_profile_name' updated."
     echo "File: $PROFILE_CMDS_FILE"
@@ -524,7 +617,9 @@ elif [[ "$main_action" == "R" ]]; then
             fi
         else
             echo "Error: Profile directory '$PROFILE_TO_REMOVE_DIR' not found. Cannot remove."
-            exit 1 # Should not happen if select_profile_flow worked correctly
+            # This should ideally not happen if select_profile_flow worked correctly
+            # and the profile wasn't deleted externally between selection and this point.
+            # Consider exiting if this state is critical.
         fi
     else
         echo "Profile removal cancelled."
