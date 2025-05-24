@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import userButton from "@/features/auth/components/userButton";
+import UserButton from "@/features/auth/components/UserButton";
 
 
 interface StandloneLayoutProps { 
@@ -16,7 +16,7 @@ const StandloneLayout = ({ children }: StandloneLayoutProps) => {
                     <Link href="/">
                         <Image src="/logo.svg" alt="Logo" height={56} width={152} />
                     </Link>
-                    <userButton/>
+                    <UserButton/>
                 </nav>
                 <div className="flex flex-col items-center justify-center py-4">
                     { children }
