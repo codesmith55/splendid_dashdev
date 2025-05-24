@@ -36,6 +36,7 @@ const CreateWorkspaceForm = ({ onCancel }: Props) => {
 			{
 				onSuccess: () => {
 					form.reset();
+					onCancel?.();
 				},
 			}
 		);
