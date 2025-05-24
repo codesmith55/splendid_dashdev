@@ -20,7 +20,7 @@ const WorkspaceSwitcher = () => {
 	const router = useRouter();
 	const workspaceId = useWorkspaceId();
 	const { data: workspaces } = useGetWorkspaces();
-	const { isOpen, setIsOpen } = useCreateWorkspaceModal();
+	const { open } = useCreateWorkspaceModal();
 
 	const onSelect = (id: string) => {
 		router.push(`/workspaces/${id}`);
@@ -29,7 +29,7 @@ const WorkspaceSwitcher = () => {
 		<div className="flex flex-col gap-y-2">
 			<div className="flex items-center justify-between">
 				<p className="text-xs uppercase text-neutral-500">Workspace</p>
-				<RiAddCircleFill onClick= { setIsOpen } className="size-5 text-neutral-500 cursor-pointer hover:opacity-75" />
+				<RiAddCircleFill onClick= { open } className="size-5 text-neutral-500 cursor-pointer hover:opacity-75" />
 			</div>
 			<Select onValueChange={onSelect} value={workspaceId}>
 				<SelectTrigger className="w-full bg-neutral-200 font-medium p-1">
