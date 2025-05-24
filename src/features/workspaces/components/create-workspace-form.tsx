@@ -16,11 +16,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCreateWorkspace } from "../api/use-create-workspace";
+import { useRouter } from "next/navigation";
 
 interface Props {
 	onCancel?: () => void;
 }
 const CreateWorkspaceForm = ({ onCancel }: Props) => {
+	const router = useRouter();
+
 	const { mutate, isPending } = useCreateWorkspace();
 
 	const form = useForm<z.infer<typeof createWorkSpaceSchema>>({
@@ -34,9 +37,10 @@ const CreateWorkspaceForm = ({ onCancel }: Props) => {
 		mutate(
 			{ json: values },
 			{
-				onSuccess: () => {
+				onSuccess: ({ data }) => {
 					form.reset();
-					onCancel?.();
+					//onCancel?.();
+					router.push(`/workspaces/${data.$id}`);
 				},
 			}
 		);
