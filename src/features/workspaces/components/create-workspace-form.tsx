@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCreateWorkspace } from "../api/use-create-workspace";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 interface Props {
 	onCancel?: () => void;
@@ -82,6 +83,7 @@ const CreateWorkspaceForm = ({ onCancel }: Props) => {
 								variant="secondary"
 								onClick={onCancel}
 								disabled={isPending}
+								className={cn(!onCancel && "invisible")}
 							>
 								Cancel
 							</Button>
